@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Muscle Anatomy Quiz</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--text:#18202a;--muted:#687386;--accent:#4f46e5;--good:#16834b;--bad:#c62828;--border:#e1e5ec}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--text)}
+.app{max-width:720px;margin:auto;padding:18px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px}
+h1{font-size:25px;margin:4px 0}.sub{color:var(--muted);font-size:14px}.card{background:#fff;border:1px solid var(--border);border-radius:18px;padding:18px;margin-top:15px;box-shadow:0 4px 18px #00000008}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.stat{background:#f7f8fc;border-radius:12px;padding:10px;text-align:center}.stat b{display:block;font-size:20px}.stat span{font-size:12px;color:var(--muted)}
+.progress{height:8px;background:#e8ebf2;border-radius:20px;overflow:hidden;margin:15px 0}.bar{height:100%;background:var(--accent);width:0}
+label{display:block;font-weight:650;font-size:14px;margin:14px 0 6px}select,input{width:100%;padding:13px;border:1px solid var(--border);border-radius:11px;background:white;font-size:15px}
+button{border:0;border-radius:11px;padding:13px 16px;font-weight:700;cursor:pointer}.primary{background:var(--accent);color:#fff;width:100%;margin-top:18px}.secondary{background:#eef0f6;color:#252b36}.danger{background:#fff0f0;color:var(--bad)}
+.exercise{font-size:21px;font-weight:800}.feedback{margin-top:14px;padding:13px;border-radius:12px;display:none}.correct{background:#eaf8f0;color:var(--good);display:block}.wrong{background:#fff0f0;color:var(--bad);display:block}
+.hidden{display:none}.actions{display:flex;gap:8px;margin-top:10px}.actions button{flex:1}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.small{font-size:12px;color:var(--muted)}
+.auth{display:flex;gap:8px;align-items:center}.user{font-size:12px;color:var(--muted)}hr{border:0;border-top:1px solid var(--border);margin:18px 0}
+@media(max-width:520px){.grid{grid-template-columns:1fr}.app{padding:12px}}
+</style></head>
+<body><div class="app">
+<div class="top"><div><h1>💪 Muscle Anatomy Quiz</h1><div class="sub">Prime mover • Assistors • Stabilizers • Type • Joint action</div></div><div class="auth"><span id="user" class="user">Not signed in</span><button class="secondary" onclick="toggleAuth()">Login</button></div></div>
+
+<div id="authCard" class="card hidden"><h2>Account</h2><p class="small">Use your email and password. A Supabase account is required to save quiz attempts.</p>
+<label>Email</label><input id="email" type="email" placeholder="you@example.com"><label>Password</label><input id="password" type="password" placeholder="Password">
+<div class="actions"><button class="primary" onclick="signIn()">Sign in</button><button class="secondary" onclick="signUp()">Create account</button></div><div id="authMsg" class="small"></div></div>
+
+<div class="card">
+<div class="stats"><div class="stat"><b id="score">0</b><span>Points</span></div><div class="stat"><b id="qno">1</b><span>Question</span></div><div class="stat"><b id="percent">0%</b><span>Accuracy</span></div></div>
+<div class="progress"><div class="bar" id="bar"></div></div><div class="exercise" id="exercise">Loading…</div><div id="quiz"></div>
+<button class="primary" id="submit" onclick="checkAnswer()">Submit Answer</button><div class="feedback" id="feedback"></div>
+<div class="actions"><button class="secondary" onclick="nextQuestion()">Next Exercise →</button><button class="secondary" onclick="resetQuiz()">Reset</button></div></div>
+<div class="card" id="results" style="display:none"></div>
+
+<div class="card hidden" id="admin"><h2>⚙️ Admin</h2><p class="small">Admin actions use Supabase RLS. Only users marked as admins in <code>profiles</code> can change settings or exercises.</p>
+<label>Pass mark (%)</label><input id="passmark" type="number" min="0" max="100"><button class="primary" onclick="savePassmark()">Save Pass Mark</button><hr>
+<h3>Exercise bank</h3><div id="exerciseList"></div><h3>Add exercise</h3><div class="grid">
+<input id="n" placeholder="Exercise name"><input id="pm" placeholder="Prime mover"><input id="am" placeholder="Assistors"><input id="sm" placeholder="Stabilizers"><input id="ty" placeholder="Type"><input id="ja" placeholder="Joint action"></div>
+<button class="primary" onclick="addExercise()">Add Exercise</button></div>
+</div>
+
+<script>
+const SUPABASE_URL="https://hlyzzonrcaklwfsibuaf.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY="PASTE_YOUR_SUPABASE_PUBLISHABLE_KEY_HERE";
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
+let exercises=[],passmark=70,idx=0,score=0,answered=0,correct=0,locked=false,currentUser=null,isAdmin=false;
+const fields=[["pm","Prime mover",3],["am","Assistor movers",2],["sm","Stabilizers",2],["ty","Type",1],["ja","Joint action",2]];
+
+async function init(){
+ if(SUPABASE_PUBLISHABLE_KEY.includes("PASTE_")) {alert("Add your Supabase publishable key to index.html first.");return}
+ const {data:{session}}=await sb.auth.getSession(); await setUser(session?.user||null);
+ sb.auth.onAuthStateChange((_e,s)=>setUser(s?.user||null));
+ await loadSettings(); await loadExercises(); render();
+}
+async function setUser(u){currentUser=u;isAdmin=false;document.getElementById("user").textContent=u?u.email:"Not signed in";document.querySelector('.auth button').textContent=u?"Logout":"Login";
+ if(u){const {data}=await sb.from("profiles").select("is_admin").eq("id",u.id).maybeSingle();isAdmin=!!data?.is_admin;if(isAdmin)document.getElementById("admin").classList.remove("hidden");}
+}
+async function loadSettings(){const {data,error}=await sb.from("quiz_settings").select("pass_mark").eq("id",1).single();if(!error&&data)passmark=data.pass_mark}
+async function loadExercises(){const {data,error}=await sb.from("exercises").select("*").eq("active",true).order("id");if(error){console.error(error);document.getElementById("exercise").textContent="Could not load exercises";return}exercises=data||[];if(isAdmin)renderAdmin()}
+function opts(key){return [...new Set(exercises.map(e=>e[key]))].filter(Boolean).sort()}
+function esc(s){return String(s).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;")}
+function norm(s){return String(s).toLowerCase().replace(/\s+/g," ").trim()}
+function render(){if(!exercises.length)return;let e=exercises[idx%exercises.length];document.getElementById("exercise").textContent=e.name;document.getElementById("qno").textContent=idx+1;document.getElementById("score").textContent=score;document.getElementById("percent").textContent=answered?Math.round(correct/answered*100)+"%":"0%";document.getElementById("bar").style.width=Math.min(100,answered/exercises.length*100)+"%";
+document.getElementById("quiz").innerHTML=fields.map(([k,l,p])=>`<label>${l} <span class="small">(${p} pts)</span></label><select id="${k}"><option value="">Select an answer…</option>${opts(k).map(v=>`<option>${esc(v)}</option>`).join("")}</select>`).join("");document.getElementById("feedback").className="feedback";document.getElementById("feedback").innerHTML="";locked=false}
+function checkAnswer(){if(locked||!exercises.length)return;let e=exercises[idx%exercises.length],got=0,details=[];fields.forEach(([k,l,p])=>{let v=document.getElementById(k).value;if(v&&norm(v)===norm(e[k]))got+=p;else details.push(`${l}: ${e[k]}`)});score+=got;answered++;if(got===10)correct++;let f=document.getElementById("feedback");f.className="feedback "+(got===10?"correct":"wrong");f.innerHTML=got===10?`✅ Perfect! +${got} points`:`${got}/10 points. Correct answers: ${details.join(" • ")}`;locked=true;renderStats();if(answered>=exercises.length)showResults()}
+function renderStats(){document.getElementById("score").textContent=score;document.getElementById("percent").textContent=answered?Math.round(correct/answered*100)+"%":"0%"}
+function nextQuestion(){idx=(idx+1)%Math.max(1,exercises.length);render()}
+function resetQuiz(){idx=0;score=0;answered=0;correct=0;document.getElementById("results").style.display="none";render()}
+async function showResults(){let pct=Math.round(score/(answered*10)*100),pass=pct>=passmark,r=document.getElementById("results");r.style.display="block";r.innerHTML=`<h2>${pass?"🏆 Passed!":"📚 Keep training!"}</h2><p>Score: <b>${score}/${answered*10}</b> (${pct}%)</p><p>Pass mark: ${passmark}%</p><p>${currentUser?"Your result will be saved to your account.":"Sign in to save your result."}</p>`;
+if(currentUser)await sb.from("quiz_attempts").insert({user_id:currentUser.id,score,max_score:answered*10,percentage:pct,passed:pass})}
+async function toggleAuth(){if(currentUser){await sb.auth.signOut();location.reload()}else document.getElementById("authCard").classList.toggle("hidden")}
+async function signIn(){const email=document.getElementById("email").value,password=document.getElementById("password").value;const {error}=await sb.auth.signInWithPassword({email,password});document.getElementById("authMsg").textContent=error?error.message:"Signed in."}
+async function signUp(){const email=document.getElementById("email").value,password=document.getElementById("password").value;const {error}=await sb.auth.signUp({email,password});document.getElementById("authMsg").textContent=error?error.message:"Account created. Check email if confirmation is enabled."}
+async function savePassmark(){if(!isAdmin)return alert("Admin access required.");let v=Math.max(0,Math.min(100,Number(document.getElementById("passmark").value)||0));const {error}=await sb.from("quiz_settings").update({pass_mark:v}).eq("id",1);if(error)alert(error.message);else{passmark=v;alert("Pass mark saved: "+v+"%")}}
+async function addExercise(){if(!isAdmin)return alert("Admin access required.");let e={name:n.value.trim(),prime_mover:pm.value.trim(),assistors:am.value.trim(),stabilizers:sm.value.trim(),exercise_type:ty.value.trim(),joint_action:ja.value.trim(),active:true};if(Object.values(e).some(x=>!x)){alert("Fill every field.");return}let {error}=await sb.from("exercises").insert(e);if(error)alert(error.message);else{["n","pm","am","sm","ty","ja"].forEach(id=>document.getElementById(id).value="");await loadExercises();render()}}
+async function deleteExercise(id){if(!isAdmin)return;const {error}=await sb.from("exercises").update({active:false}).eq("id",id);if(error)alert(error.message);else{await loadExercises();render()}}
+function renderAdmin(){document.getElementById("passmark").value=passmark;document.getElementById("exerciseList").innerHTML=exercises.map(e=>`<div style="padding:8px 0;border-bottom:1px solid #e1e5ec"><b>${esc(e.name)}</b><button class="danger" style="float:right;padding:6px 9px" onclick="deleteExercise(${e.id})">Delete</button></div>`).join("")}
+init();
+</script></body></html>
